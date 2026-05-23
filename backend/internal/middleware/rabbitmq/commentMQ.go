@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type CommentMQ struct {
-	*RabbitMQ
+	ch *amqp.Channel
 }
 
 const (
@@ -34,10 +36,15 @@ func NewCommentMQ(base *RabbitMQ) (*CommentMQ, error) {
 	if base == nil {
 		return nil, errors.New("rabbitmq base is nil")
 	}
-	if err := base.DeclareTopic(commentExchange, commentQueue, commentBindingKey); err != nil {
+	ch, err := base.NewChannel()
+	if err != nil {
 		return nil, err
 	}
-	return &CommentMQ{RabbitMQ: base}, nil
+	if err := DeclareTopic(ch, commentExchange, commentQueue, commentBindingKey); err != nil {
+		ch.Close()
+		return nil, err
+	}
+	return &CommentMQ{ch: ch}, nil
 }
 
 func (c *CommentMQ) Publish(ctx context.Context, username string, videoID, authorID uint, content string) error {
@@ -56,7 +63,7 @@ func (c *CommentMQ) Delete(ctx context.Context, commentID uint) error {
 }
 
 func (c *CommentMQ) publish(ctx context.Context, action, routingKey string, evt CommentEvent) error {
-	if c == nil || c.RabbitMQ == nil {
+	if c == nil || c.ch == nil {
 		return errors.New("comment mq is not initialized")
 	}
 	id, err := newEventID(16)
@@ -66,5 +73,5 @@ func (c *CommentMQ) publish(ctx context.Context, action, routingKey string, evt 
 	evt.EventID = id
 	evt.Action = action
 	evt.OccurredAt = time.Now().UTC()
-	return c.PublishJSON(ctx, commentExchange, routingKey, evt)
+	return PublishJSON(ctx, c.ch, commentExchange, routingKey, evt)
 }

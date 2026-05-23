@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type TimelineMQ struct {
-	*RabbitMQ
+	ch *amqp.Channel
 }
 
 const (
@@ -28,14 +30,19 @@ func NewTimelineMQ(base *RabbitMQ) (*TimelineMQ, error) {
 	if base == nil {
 		return nil, errors.New("rabbitmq base is nil")
 	}
-	if err := base.DeclareTopic(timelineExchange, timelineQueue, timelineBindingKey); err != nil {
+	ch, err := base.NewChannel()
+	if err != nil {
 		return nil, err
 	}
-	return &TimelineMQ{RabbitMQ: base}, nil
+	if err := DeclareTopic(ch, timelineExchange, timelineQueue, timelineBindingKey); err != nil {
+		ch.Close()
+		return nil, err
+	}
+	return &TimelineMQ{ch: ch}, nil
 }
 
 func (t *TimelineMQ) PublishVideo(ctx context.Context, videoID uint, createTime time.Time) error {
-	if t == nil || t.RabbitMQ == nil {
+	if t == nil || t.ch == nil {
 		return errors.New("timeline mq is not initialized")
 	}
 	if videoID == 0 {
@@ -51,5 +58,5 @@ func (t *TimelineMQ) PublishVideo(ctx context.Context, videoID uint, createTime 
 		CreateTime: createTime.UnixMilli(),
 		OccurredAt: time.Now(),
 	}
-	return t.PublishJSON(ctx, timelineExchange, timelinePublishRK, timeline)
+	return PublishJSON(ctx, t.ch, timelineExchange, timelinePublishRK, timeline)
 }

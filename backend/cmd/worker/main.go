@@ -18,6 +18,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/joho/godotenv"
 	"gorm.io/gorm"
 )
 
@@ -55,6 +56,10 @@ func connectWithRetry(name string, maxRetries int, fn func() error) {
 }
 
 func main() {
+	// 加载 .env（本地开发）
+	if err := godotenv.Load(); err != nil {
+		log.Println(".env not found; continuing")
+	}
 	// 加载配置
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {

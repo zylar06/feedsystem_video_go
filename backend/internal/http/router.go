@@ -201,18 +201,21 @@ func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ) *g
 		timelineMQ = nil
 	}
 	worker.StartOutboxPoller(db, timelineMQ)
-	worker.StartConsumer(timelineMQ, "video.timeline.update.queue", cache)
+	worker.StartConsumer(timelineMQ, "video.timeline.update.queue", cache, rmq)
 
 	// SSE notification
-	if rmq != nil && rmq.Ch != nil {
-		if err := rmq.DeclareTopic("like.events", "notification.like", "like.like"); err != nil {
-			log.Printf("notification like topic init failed: %v", err)
-		}
-		if err := rmq.DeclareTopic("comment.events", "notification.comment", "comment.publish"); err != nil {
-			log.Printf("notification comment topic init failed: %v", err)
-		}
-		if err := rmq.DeclareTopic("social.events", "notification.social", "social.follow"); err != nil {
-			log.Printf("notification social topic init failed: %v", err)
+	if rmq != nil {
+		if notifCh, err := rmq.NewChannel(); err == nil {
+			if err := rabbitmq.DeclareTopic(notifCh, "like.events", "notification.like", "like.like"); err != nil {
+				log.Printf("notification like topic init failed: %v", err)
+			}
+			if err := rabbitmq.DeclareTopic(notifCh, "comment.events", "notification.comment", "comment.publish"); err != nil {
+				log.Printf("notification comment topic init failed: %v", err)
+			}
+			if err := rabbitmq.DeclareTopic(notifCh, "social.events", "notification.social", "social.follow"); err != nil {
+				log.Printf("notification social topic init failed: %v", err)
+			}
+			notifCh.Close()
 		}
 	}
 	sseHub := worker.NewSSEHub(db)
@@ -221,12 +224,12 @@ func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ) *g
 	sseHub.RegisterRoutes(r, notifGroup)
 
 	go func() {
-		if rmq != nil && rmq.Ch != nil {
+		if rmq != nil {
 			hub := sseHub
 			ctx := context.Background()
 			// consume from like queue
 			go func() {
-				ch, err := rmq.Conn.Channel()
+				ch, err := rmq.NewChannel()
 				if err != nil {
 					log.Printf("notification-like channel: %v", err)
 					return
@@ -238,7 +241,7 @@ func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ) *g
 				}
 			}()
 			go func() {
-				ch, err := rmq.Conn.Channel()
+				ch, err := rmq.NewChannel()
 				if err != nil {
 					log.Printf("notification-comment channel: %v", err)
 					return
@@ -250,7 +253,7 @@ func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ) *g
 				}
 			}()
 			go func() {
-				ch, err := rmq.Conn.Channel()
+				ch, err := rmq.NewChannel()
 				if err != nil {
 					log.Printf("notification-social channel: %v", err)
 					return

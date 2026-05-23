@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type LikeMQ struct {
-	*RabbitMQ
+	ch *amqp.Channel
 }
 
 const (
@@ -31,10 +33,15 @@ func NewLikeMQ(base *RabbitMQ) (*LikeMQ, error) {
 	if base == nil {
 		return nil, errors.New("rabbitmq base is nil")
 	}
-	if err := base.DeclareTopic(likeExchange, likeQueue, likeBindingKey); err != nil {
+	ch, err := base.NewChannel()
+	if err != nil {
 		return nil, err
 	}
-	return &LikeMQ{RabbitMQ: base}, nil
+	if err := DeclareTopic(ch, likeExchange, likeQueue, likeBindingKey); err != nil {
+		ch.Close()
+		return nil, err
+	}
+	return &LikeMQ{ch: ch}, nil
 }
 
 func (l *LikeMQ) Like(ctx context.Context, userID, videoID uint) error {
@@ -46,7 +53,7 @@ func (l *LikeMQ) Unlike(ctx context.Context, userID, videoID uint) error {
 }
 
 func (l *LikeMQ) publish(ctx context.Context, action, routingKey string, userID, videoID uint) error {
-	if l == nil || l.RabbitMQ == nil {
+	if l == nil || l.ch == nil {
 		return errors.New("like mq is not initialized")
 	}
 	if userID == 0 || videoID == 0 {
@@ -63,5 +70,5 @@ func (l *LikeMQ) publish(ctx context.Context, action, routingKey string, userID,
 		VideoID:    videoID,
 		OccurredAt: time.Now(),
 	}
-	return l.PublishJSON(ctx, likeExchange, routingKey, event)
+	return PublishJSON(ctx, l.ch, likeExchange, routingKey, event)
 }

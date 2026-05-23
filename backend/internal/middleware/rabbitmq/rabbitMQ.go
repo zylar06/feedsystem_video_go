@@ -14,9 +14,9 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// RabbitMQ 只管理 Connection，Channel 由各组件按需创建
 type RabbitMQ struct {
 	Conn *amqp.Connection
-	Ch   *amqp.Channel
 }
 
 func NewRabbitMQ(cfg *config.RabbitMQConfig) (*RabbitMQ, error) {
@@ -28,41 +28,35 @@ func NewRabbitMQ(cfg *config.RabbitMQConfig) (*RabbitMQ, error) {
 	if err != nil {
 		return nil, err
 	}
-	ch, err := conn.Channel()
-	if err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	return &RabbitMQ{Conn: conn, Ch: ch}, nil
+	return &RabbitMQ{Conn: conn}, nil
 }
 
 func (r *RabbitMQ) Close() error {
 	if r == nil {
 		return nil
 	}
-	var closeErr error
-	if r.Ch != nil {
-		if err := r.Ch.Close(); err != nil {
-			closeErr = err
-		}
-	}
 	if r.Conn != nil {
-		if err := r.Conn.Close(); closeErr == nil && err != nil {
-			closeErr = err
-		}
+		return r.Conn.Close()
 	}
-	return closeErr
+	return nil
 }
 
-func (r *RabbitMQ) DeclareTopic(exchange string, queue string, bindingKey string) error {
-	if r == nil || r.Ch == nil {
-		return errors.New("rabbitmq is not initialized")
+func (r *RabbitMQ) NewChannel() (*amqp.Channel, error) {
+	if r == nil || r.Conn == nil {
+		return nil, errors.New("rabbitmq connection is not initialized")
+	}
+	return r.Conn.Channel()
+}
+
+func DeclareTopic(ch *amqp.Channel, exchange string, queue string, bindingKey string) error {
+	if ch == nil {
+		return errors.New("channel is not initialized")
 	}
 	if exchange == "" || queue == "" || bindingKey == "" {
 		return errors.New("exchange/queue/bindingKey is required")
 	}
 
-	if err := r.Ch.ExchangeDeclare(
+	if err := ch.ExchangeDeclare(
 		exchange,
 		"topic",
 		true,
@@ -74,7 +68,7 @@ func (r *RabbitMQ) DeclareTopic(exchange string, queue string, bindingKey string
 		return err
 	}
 
-	q, err := r.Ch.QueueDeclare(
+	q, err := ch.QueueDeclare(
 		queue,
 		true,
 		false,
@@ -86,7 +80,7 @@ func (r *RabbitMQ) DeclareTopic(exchange string, queue string, bindingKey string
 		return err
 	}
 
-	if err := r.Ch.QueueBind(
+	if err := ch.QueueBind(
 		q.Name,
 		bindingKey,
 		exchange,
@@ -95,15 +89,15 @@ func (r *RabbitMQ) DeclareTopic(exchange string, queue string, bindingKey string
 	); err != nil {
 		return err
 	}
-	if err := DeclareDLX(r.Ch, queue); err != nil {
+	if err := DeclareDLX(ch, queue); err != nil {
 		log.Printf("DLX declare failed for %s: %v", queue, err)
 	}
 	return nil
 }
 
-func (r *RabbitMQ) PublishJSON(ctx context.Context, exchange string, routingKey string, payload any) error {
-	if r == nil || r.Ch == nil {
-		return errors.New("rabbitmq is not initialized")
+func PublishJSON(ctx context.Context, ch *amqp.Channel, exchange string, routingKey string, payload any) error {
+	if ch == nil {
+		return errors.New("channel is not initialized")
 	}
 	if exchange == "" || routingKey == "" {
 		return errors.New("exchange and routingKey are required")
@@ -112,7 +106,7 @@ func (r *RabbitMQ) PublishJSON(ctx context.Context, exchange string, routingKey 
 	if err != nil {
 		return err
 	}
-	return r.Ch.PublishWithContext(ctx, exchange, routingKey, false, false, amqp.Publishing{
+	return ch.PublishWithContext(ctx, exchange, routingKey, false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now(),

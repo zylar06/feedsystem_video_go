@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type SocialMQ struct {
-	*RabbitMQ
+	ch *amqp.Channel
 }
 
 const (
@@ -31,10 +33,15 @@ func NewSocialMQ(base *RabbitMQ) (*SocialMQ, error) {
 	if base == nil {
 		return nil, errors.New("rabbitmq base is nil")
 	}
-	if err := base.DeclareTopic(socialExchange, socialQueue, socialBindingKey); err != nil {
+	ch, err := base.NewChannel()
+	if err != nil {
 		return nil, err
 	}
-	return &SocialMQ{RabbitMQ: base}, nil
+	if err := DeclareTopic(ch, socialExchange, socialQueue, socialBindingKey); err != nil {
+		ch.Close()
+		return nil, err
+	}
+	return &SocialMQ{ch: ch}, nil
 }
 
 func (s *SocialMQ) Follow(ctx context.Context, followerID, vloggerID uint) error {
@@ -46,7 +53,7 @@ func (s *SocialMQ) UnFollow(ctx context.Context, followerID, vloggerID uint) err
 }
 
 func (s *SocialMQ) publish(ctx context.Context, action, routingKey string, followerID, vloggerID uint) error {
-	if s == nil || s.RabbitMQ == nil {
+	if s == nil || s.ch == nil {
 		return errors.New("social mq is not initialized")
 	}
 	if followerID == 0 || vloggerID == 0 {
@@ -63,5 +70,5 @@ func (s *SocialMQ) publish(ctx context.Context, action, routingKey string, follo
 		VloggerID:  vloggerID,
 		OccurredAt: time.Now().UTC(),
 	}
-	return s.PublishJSON(ctx, socialExchange, routingKey, evt)
+	return PublishJSON(ctx, s.ch, socialExchange, routingKey, evt)
 }
