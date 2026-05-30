@@ -47,6 +47,7 @@ func (s *SocialService) Follow(ctx context.Context, social *Social) error {
 
 	// DB 成功后，失效该用户的关注列表缓存
 	s.invalidateFollowingFeedCache(context.Background(), social.FollowerID)
+	s.invalidateFollowerCountCache(context.Background(), social.VloggerID)
 
 	// 最后发 MQ（用于通知），失败只记日志不影响业务
 	if s.socialMQ != nil {
@@ -81,6 +82,7 @@ func (s *SocialService) Unfollow(ctx context.Context, social *Social) error {
 
 	// 失效缓存
 	s.invalidateFollowingFeedCache(context.Background(), social.FollowerID)
+	s.invalidateFollowerCountCache(context.Background(), social.VloggerID)
 
 	// 最后发 MQ
 	if s.socialMQ != nil {
@@ -95,9 +97,21 @@ func (s *SocialService) invalidateFollowingFeedCache(ctx context.Context, accoun
 	if s.cache == nil {
 		return
 	}
+	if err := s.cache.Del(ctx, s.cache.Key("feed:inbox:%d", accountID)); err != nil {
+		log.Printf("invalidate following inbox failed: accountID=%d, err=%v", accountID, err)
+	}
 	pattern := s.cache.Key("feed:listByFollowing:*:accountID=%d:*", accountID)
 	if err := s.cache.DelByPattern(ctx, pattern); err != nil {
 		log.Printf("失效 Following 缓存失败: accountID=%d, err=%v", accountID, err)
+	}
+}
+
+func (s *SocialService) invalidateFollowerCountCache(ctx context.Context, accountID uint) {
+	if s.cache == nil {
+		return
+	}
+	if err := s.cache.Del(ctx, s.cache.Key("social:follower_count:%d", accountID)); err != nil {
+		log.Printf("invalidate follower count cache failed: accountID=%d, err=%v", accountID, err)
 	}
 }
 

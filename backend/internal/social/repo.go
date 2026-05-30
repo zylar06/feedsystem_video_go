@@ -100,6 +100,19 @@ func (r *SocialRepository) CountFollowers(ctx context.Context, vloggerID uint) (
 	return count, nil
 }
 
+func (r *SocialRepository) ListFollowerIDs(ctx context.Context, vloggerID uint, afterID uint, limit int) ([]uint, error) {
+	var ids []uint
+	if limit <= 0 {
+		return ids, nil
+	}
+	err := r.db.WithContext(ctx).Model(&Social{}).
+		Where("vlogger_id = ? AND follower_id > ?", vloggerID, afterID).
+		Order("follower_id ASC").
+		Limit(limit).
+		Pluck("follower_id", &ids).Error
+	return ids, err
+}
+
 func (r *SocialRepository) CountVloggers(ctx context.Context, followerID uint) (int64, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&Social{}).Where("follower_id = ?", followerID).Count(&count).Error; err != nil {

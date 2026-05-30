@@ -79,3 +79,21 @@ func (c *Client) ZRevRangeByScore(ctx context.Context, key string, max, min stri
 		Count:  count,
 	}).Result()
 }
+
+func (c *Client) ZAddExpireTrimBatch(ctx context.Context, items map[string]redis.Z, ttl time.Duration, cap int64) error {
+	if c == nil || c.rdb == nil || len(items) == 0 {
+		return nil
+	}
+	pipe := c.rdb.Pipeline()
+	for key, member := range items {
+		pipe.ZAdd(ctx, key, member)
+		if cap > 0 {
+			pipe.ZRemRangeByRank(ctx, key, 0, -cap-1)
+		}
+		if ttl > 0 {
+			pipe.Expire(ctx, key, ttl)
+		}
+	}
+	_, err := pipe.Exec(ctx)
+	return err
+}

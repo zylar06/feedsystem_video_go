@@ -359,6 +359,9 @@ func (f *FeedService) ListByFollowing(ctx context.Context, limit int, latestBefo
 		}
 		return resp, nil
 	}
+	if resp, ok := f.listByFollowingFromInbox(ctx, limit, latestBefore, viewerAccountID); ok {
+		return resp, nil
+	}
 	var cacheKey string
 	if viewerAccountID != 0 && f.rediscache != nil {
 		before := int64(0)
@@ -422,6 +425,87 @@ func (f *FeedService) ListByFollowing(ctx context.Context, limit int, latestBefo
 		}
 	}
 	return resp, nil
+}
+
+func (f *FeedService) listByFollowingFromInbox(ctx context.Context, limit int, latestBefore time.Time, viewerAccountID uint) (ListByFollowingResponse, bool) {
+	if viewerAccountID == 0 || f.rediscache == nil {
+		return ListByFollowingResponse{}, false
+	}
+
+	maxScore := "+inf"
+	if !latestBefore.IsZero() {
+		maxScore = strconv.FormatInt(latestBefore.Unix()-1, 10)
+	}
+
+	cacheCtx, cancel := context.WithTimeout(ctx, 80*time.Millisecond)
+	members, err := f.rediscache.ZRevRangeByScore(cacheCtx, f.rediscache.Key("feed:inbox:%d", viewerAccountID), maxScore, "-inf", 0, int64(limit))
+	cancel()
+	if err != nil || len(members) == 0 {
+		return ListByFollowingResponse{}, false
+	}
+
+	ids := make([]uint, 0, len(members))
+	for _, member := range members {
+		id, err := strconv.ParseUint(member, 10, 64)
+		if err == nil && id > 0 {
+			ids = append(ids, uint(id))
+		}
+	}
+	if len(ids) == 0 {
+		return ListByFollowingResponse{}, false
+	}
+
+	videos, err := f.GetVideoByIDs(ctx, ids)
+	if err != nil {
+		return ListByFollowingResponse{}, false
+	}
+
+	merged := make([]*video.Video, 0, limit)
+	seen := make(map[uint]struct{}, limit)
+	for _, v := range videos {
+		if v == nil {
+			continue
+		}
+		if _, ok := seen[v.ID]; ok {
+			continue
+		}
+		seen[v.ID] = struct{}{}
+		merged = append(merged, v)
+	}
+
+	if len(merged) < limit {
+		dbVideos, err := f.repo.ListByFollowing(ctx, limit, viewerAccountID, latestBefore)
+		if err == nil {
+			for _, v := range dbVideos {
+				if v == nil {
+					continue
+				}
+				if _, ok := seen[v.ID]; ok {
+					continue
+				}
+				seen[v.ID] = struct{}{}
+				merged = append(merged, v)
+				if len(merged) >= limit {
+					break
+				}
+			}
+		}
+	}
+
+	feedVideos, err := f.buildFeedVideos(ctx, merged, viewerAccountID)
+	if err != nil {
+		return ListByFollowingResponse{}, false
+	}
+
+	var nextTime int64
+	if len(merged) > 0 {
+		nextTime = merged[len(merged)-1].CreateTime.Unix()
+	}
+	return ListByFollowingResponse{
+		VideoList: feedVideos,
+		NextTime:  nextTime,
+		HasMore:   len(merged) == limit,
+	}, true
 }
 
 func (f *FeedService) ListByPopularity(ctx context.Context, limit int, reqAsOf int64, offset int, viewerAccountID uint, latestPopularity int64, latestBefore time.Time, latestIDBefore uint) (ListByPopularityResponse, error) {
