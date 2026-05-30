@@ -9,8 +9,11 @@ import (
 	rediscache "feedsystem_video_go/internal/middleware/redis"
 	"feedsystem_video_go/internal/observability"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -91,8 +94,29 @@ func main() {
 
 	// 设置路由
 	r := apphttp.SetRouter(sqlDB, cache, rmq)
-	log.Printf("Server is running on port %d", cfg.Server.Port)
-	if err := r.Run(":" + strconv.Itoa(cfg.Server.Port)); err != nil {
-		log.Fatalf("Failed to run server: %v", err)
+	addr := ":" + strconv.Itoa(cfg.Server.Port)
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: r,
 	}
+
+	go func() {
+		log.Printf("Server is running on port %d", cfg.Server.Port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to run server: %v", err)
+		}
+	}()
+
+	shutdownSignal, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-shutdownSignal.Done()
+	log.Printf("API shutting down...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("API forced shutdown: %v", err)
+		return
+	}
+	log.Printf("API stopped")
 }
