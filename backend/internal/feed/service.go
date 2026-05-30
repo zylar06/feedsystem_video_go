@@ -470,7 +470,7 @@ func (f *FeedService) ListByPopularity(ctx context.Context, limit int, reqAsOf i
 				}
 			}
 
-			videos, err := f.repo.GetByIDs(ctx, ids)
+			videos, err := f.GetVideoByIDs(ctx, ids)
 			if err == nil {
 				byID := make(map[uint]*video.Video, len(videos))
 				for _, v := range videos {
