@@ -200,7 +200,12 @@ func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ) *g
 		log.Printf("timelineMQ init failed (mq disabled): %v", err)
 		timelineMQ = nil
 	}
-	worker.StartOutboxPoller(db, timelineMQ)
+	fanoutMQ, err := rabbitmq.NewFanoutMQ(rmq)
+	if err != nil {
+		log.Printf("fanoutMQ init failed (mq disabled): %v", err)
+		fanoutMQ = nil
+	}
+	worker.StartOutboxPoller(db, timelineMQ, fanoutMQ)
 	worker.StartConsumer(timelineMQ, "video.timeline.update.queue", cache, rmq)
 
 	// SSE notification

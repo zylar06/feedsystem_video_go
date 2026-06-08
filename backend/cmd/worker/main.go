@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/joho/godotenv"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"gorm.io/gorm"
 )
 
@@ -38,6 +38,10 @@ const (
 	popularityExchange   = "video.popularity.events"
 	popularityQueue      = "video.popularity.events"
 	popularityBindingKey = "video.popularity.*"
+
+	fanoutExchange   = "video.fanout.events"
+	fanoutQueue      = "video.fanout.events"
+	fanoutBindingKey = "video.fanout.*"
 )
 
 func connectWithRetry(name string, maxRetries int, fn func() error) {
@@ -161,6 +165,9 @@ func main() {
 		if err := declarePopularityTopology(topoCh); err != nil {
 			log.Fatalf("Failed to declare popularity topology: %v", err)
 		}
+		if err := declareFanoutTopology(topoCh); err != nil {
+			log.Fatalf("Failed to declare fanout topology: %v", err)
+		}
 	}
 	topoCh.Close()
 
@@ -198,6 +205,9 @@ func main() {
 	if cache != nil {
 		go runWorkerWithRetry(ctx, "PopularityWorker", conn, func(ch *amqp.Channel) error {
 			return worker.NewPopularityWorker(ch, cache, popularityQueue).Run(ctx)
+		})
+		go runWorkerWithRetry(ctx, "FanoutWorker", conn, func(ch *amqp.Channel) error {
+			return worker.NewFanoutWorker(ch, socialRepo, cache, fanoutQueue).Run(ctx)
 		})
 	}
 
@@ -274,6 +284,40 @@ func declarePopularityTopology(ch *amqp.Channel) error {
 		q.Name,
 		popularityBindingKey,
 		popularityExchange,
+		false,
+		nil,
+	)
+}
+
+func declareFanoutTopology(ch *amqp.Channel) error {
+	if err := ch.ExchangeDeclare(
+		fanoutExchange,
+		"topic",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	); err != nil {
+		return err
+	}
+
+	q, err := ch.QueueDeclare(
+		fanoutQueue,
+		true,
+		false,
+		false,
+		false,
+		amqp.Table{"x-dead-letter-exchange": mqrabbit.DLXExchange},
+	)
+	if err != nil {
+		return err
+	}
+
+	return ch.QueueBind(
+		q.Name,
+		fanoutBindingKey,
+		fanoutExchange,
 		false,
 		nil,
 	)
